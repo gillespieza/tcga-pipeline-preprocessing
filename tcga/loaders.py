@@ -208,6 +208,41 @@ def build_molecular_df(records: List[dict]) -> pd.DataFrame:
     return wide_df
 
 
+def clean_rnaseq_df(rnaseq_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Deduplicate RNA-seq sample records (ensuring one sample per patient)
+    and remove columns (genes) with missing values.
+    """
+    if rnaseq_df.empty or "SAMPLE_ID" not in rnaseq_df.columns:
+        return rnaseq_df
+
+    df = rnaseq_df.copy()
+
+    # --- 1. Deduplicate by Patient ID ---
+    # Extract PATIENT_ID from SAMPLE_ID (first 12 chars for TCGA barcode)
+    df["PATIENT_ID"] = df["SAMPLE_ID"].apply(
+        lambda x: "-".join(x.split("-")[:3]) if isinstance(x, str) and x.startswith("TCGA-") else x
+    )
+
+    before_p_dedup = len(df)
+    df = df.drop_duplicates(subset=["PATIENT_ID"])
+    after_p_dedup = len(df)
+    if before_p_dedup != after_p_dedup:
+        print(f"\n  [INFO] RNA-seq deduplicated patients: dropped {before_p_dedup - after_p_dedup} sample rows to ensure 1 sample per patient.")
+
+    df = df.drop(columns=["PATIENT_ID"])
+
+    # --- 2. Remove Missing Values (Genes/Columns with NaN) ---
+    gene_cols = [c for c in df.columns if c != "SAMPLE_ID"]
+    missing_counts = df[gene_cols].isna().sum()
+    cols_with_nans = missing_counts[missing_counts > 0].index.tolist()
+    if cols_with_nans:
+        df = df.drop(columns=cols_with_nans)
+        print(f"\n  [INFO] RNA-seq: Removed {len(cols_with_nans)} gene(s) with missing values.")
+
+    return df
+
+
 # ---------------------------------------------------------------------------
 # Mutation data
 # ---------------------------------------------------------------------------

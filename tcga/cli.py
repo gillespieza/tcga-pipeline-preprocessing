@@ -35,6 +35,7 @@ from .loaders import (
     build_clinical_df,
     clean_clinical_df,
     build_molecular_df,
+    clean_rnaseq_df,
     build_mutations_long,
     build_mutations_wide,
 )
@@ -277,14 +278,15 @@ def main(argv: Optional[List[str]] = None) -> None:
                 rnaseq_df = build_molecular_df(records)
                 if apply_log2:
                     rnaseq_df = _apply_log2_transform(rnaseq_df)
-                    rprint(f"  [green]OK[/] {len(rnaseq_df)} samples x "
-                           f"{len(rnaseq_df.columns) - 1} genes [log2(x+1)]")
-                else:
-                    rprint(f"  [green]OK[/] {len(rnaseq_df)} samples x "
-                           f"{len(rnaseq_df.columns) - 1} genes [raw]")
-                layers["rnaseq"]        = rnaseq_df
+                
+                clean_rnaseq = clean_rnaseq_df(rnaseq_df)
+                tag = " [log2(x+1)]" if apply_log2 else " [raw]"
+                rprint(f"  [green]OK[/] {len(rnaseq_df)} raw samples -> "
+                       f"{len(clean_rnaseq)} after cleaning, "
+                       f"{len(clean_rnaseq.columns) - 1} genes{tag}")
+                layers["rnaseq"]        = clean_rnaseq
                 raw_files["rnaseq"]     = rnaseq_df
-                cleaned_files["rnaseq"] = rnaseq_df
+                cleaned_files["rnaseq"] = clean_rnaseq
             except Exception as exc:
                 rprint(f"  [yellow]WARN[/] RNA-seq fetch failed: {exc}")
         else:
@@ -367,7 +369,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         for name, df in raw_files.items():
             df.to_csv(raw_dir / f"{name}.csv", index=False)
         for name, df in cleaned_files.items():
-            filename = "clinical_cleaned.csv" if name == "clinical" else f"{name}.csv"
+            if name == "clinical":
+                filename = "clinical_cleaned.csv"
+            elif name == "rnaseq":
+                filename = "rna_clean.csv"
+            else:
+                filename = f"{name}.csv"
             df.to_csv(processed_dir / filename, index=False)
 
     rprint()

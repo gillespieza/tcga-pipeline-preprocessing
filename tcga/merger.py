@@ -124,7 +124,12 @@ def write_outputs(
 
     # --- processed/ : cleaned clinical + merged table ---
     for name, df in cleaned_layers.items():
-        filename = "clinical_cleaned.csv" if name == "clinical" else f"{name}.csv"
+        if name == "clinical":
+            filename = "clinical_cleaned.csv"
+        elif name == "rnaseq":
+            filename = "rna_clean.csv"
+        else:
+            filename = f"{name}.csv"
         df.to_csv(processed_dir / filename, index=False)
 
     merged_df.to_csv(processed_dir / "merged.csv", index=False)
