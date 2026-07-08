@@ -37,13 +37,18 @@ _SESSION.headers.update({"Accept": "application/json"})
 def _get(
     endpoint: str,
     params: Optional[dict[str, Any]] = None,
-    retries: int = 3,
+    retries: int = 5,
     timeout: int = 60,
 ) -> Any:
     """
-    Make a GET request to the cBioPortal API with simple retry logic.
-    Raises requests.HTTPError on failure after all retries.
+    Make a GET request to the cBioPortal API with retry logic.
+
+    Retries on transient failures (connection errors, timeouts, and HTTP
+    429/502/503/504 responses) using exponential back-off.  Non-transient
+    HTTP errors (e.g. 400, 404) are raised immediately.
     """
+    _TRANSIENT_STATUS = {429, 502, 503, 504}
+
     url = f"{BASE_URL}/{endpoint.lstrip('/')}"
     last_exc: Optional[Exception] = None
 
@@ -54,10 +59,15 @@ def _get(
             return response.json()
         except (requests.ConnectionError, requests.Timeout) as exc:
             last_exc = exc
-            if attempt < retries - 1:
-                time.sleep(2 ** attempt)  # exponential back-off
-        except requests.HTTPError:
-            raise
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code in _TRANSIENT_STATUS:
+                last_exc = exc
+            else:
+                raise  # non-transient — fail immediately
+
+        if attempt < retries - 1:
+            wait = 2 ** attempt          # 1 s, 2 s, 4 s, 8 s …
+            time.sleep(wait)
 
     raise last_exc  # type: ignore[misc]
 
@@ -66,13 +76,18 @@ def _post(
     endpoint: str,
     json_body: Any = None,
     params: Optional[dict[str, Any]] = None,
-    retries: int = 3,
+    retries: int = 5,
     timeout: int = 120,
 ) -> Any:
     """
-    Make a POST request to the cBioPortal API with simple retry logic.
-    The API uses POST for fetching large payloads (molecular data).
+    Make a POST request to the cBioPortal API with retry logic.
+
+    Retries on transient failures (connection errors, timeouts, and HTTP
+    429/502/503/504 responses) using exponential back-off.  Non-transient
+    HTTP errors (e.g. 400, 404) are raised immediately.
     """
+    _TRANSIENT_STATUS = {429, 502, 503, 504}
+
     url = f"{BASE_URL}/{endpoint.lstrip('/')}"
     last_exc: Optional[Exception] = None
 
@@ -83,10 +98,15 @@ def _post(
             return response.json()
         except (requests.ConnectionError, requests.Timeout) as exc:
             last_exc = exc
-            if attempt < retries - 1:
-                time.sleep(2 ** attempt)
-        except requests.HTTPError:
-            raise
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code in _TRANSIENT_STATUS:
+                last_exc = exc
+            else:
+                raise  # non-transient — fail immediately
+
+        if attempt < retries - 1:
+            wait = 2 ** attempt          # 1 s, 2 s, 4 s, 8 s …
+            time.sleep(wait)
 
     raise last_exc  # type: ignore[misc]
 
