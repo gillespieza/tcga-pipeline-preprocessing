@@ -8,8 +8,12 @@ A Python CLI tool for downloading and preprocessing multi-omics data from [cBioP
 - **CLI args mode** — fully scriptable for batch use
 - **Supports**: Clinical, RNA-seq, CNA, Somatic Mutations, RPPA
 - **Mutations**: written as both long (MAF) and wide (binary gene matrix)
+- **Clinical Cleaning**:
+  - Automatically deduplicates clinical records to ensure 1 sample per patient (keeps first sample for statistical independence).
+  - Parses survival endpoints (`OS`, `DSS`, `DFS`, `PFS`) into binary event variables (`0.0` for censored, `1.0` for event).
+  - Filters out records with missing/invalid Overall Survival data.
 - **Caching**: re-running skips the download if data is already present
-- **Outputs**: individual layer CSVs + a merged wide-format CSV + `manifest.json`
+- **Outputs**: Organized into distinct `raw` and `processed` directories.
 
 ## Setup
 
@@ -58,31 +62,36 @@ python tcga_fetch.py --study kirc_tcga_pan_can_atlas_2018 --data clinical rnaseq
 
 ## Output Structure
 
+Outputs are written into two subdirectories under the study folder:
+
 ```
 output/
 └── kirc_tcga_pan_can_atlas_2018/
-    ├── clinical.csv          # Patient + sample metadata merged
-    ├── rnaseq.csv            # Samples × genes expression matrix
-    ├── cna.csv               # Samples × genes CNA matrix (-2 to +2)
-    ├── mutations_long.csv    # One row per variant (MAF format)
-    ├── mutations_wide.csv    # Samples × genes binary mutation matrix
-    ├── rppa.csv              # Samples × proteins RPPA z-scores
-    ├── merged.csv            # All selected layers joined on SAMPLE_ID
-    └── manifest.json         # Study ID, fetch date, row/column counts
+    ├── raw/
+    │   ├── clinical.csv          # Unaltered, raw clinical attributes (pivoted & merged)
+    │   ├── rnaseq.csv            # Unaltered RNA-seq expression matrix
+    │   ├── cna.csv               # Unaltered CNA matrix
+    │   ├── mutations_long.csv    # Unaltered variant list (MAF format)
+    │   └── mutations_wide.csv    # Unaltered binary mutation matrix
+    └── processed/
+        ├── clinical_cleaned.csv  # Deduplicated, binarized survival endpoints, filtered OS
+        ├── merged.csv            # All processed/cleaned layers joined on SAMPLE_ID
+        └── manifest.json         # Run metadata, sample/column counts
 ```
 
 ## Data Type Notes
 
-| Type | File | Format |
-|---|---|---|
-| Clinical | `clinical.csv` | One row per sample |
-| RNA-seq | `rnaseq.csv` | Samples × genes (RSEM or log2+1) |
-| CNA | `cna.csv` | Samples × genes (-2 deep del → +2 amp) |
-| Mutations (long) | `mutations_long.csv` | One row per variant call (MAF) |
-| Mutations (wide) | `mutations_wide.csv` | Samples × genes (0/1 binary) |
-| RPPA | `rppa.csv` | Samples × proteins (z-scores) |
-| Merged | `merged.csv` | All layers joined on SAMPLE_ID |
+| Type | Raw File (`raw/`) | Processed File (`processed/`) | Description & Format |
+|---|---|---|---|
+| Clinical | `clinical.csv` | `clinical_cleaned.csv` | Raw vs. cleaned (deduplicated, binary survival events, OS-filtered) |
+| RNA-seq | `rnaseq.csv` | `rnaseq.csv` | Samples × genes (RSEM or log2+1) |
+| CNA | `cna.csv` | `cna.csv` | Samples × genes (-2 deep del → +2 amp) |
+| Mutations (long) | `mutations_long.csv` | `mutations_long.csv` | One row per variant call (MAF) |
+| Mutations (wide) | `mutations_wide.csv` | `mutations_wide.csv` | Samples × genes (0/1 binary) |
+| RPPA | `rppa.csv` | `rppa.csv` | Samples × proteins (z-scores) |
+| Merged | - | `merged.csv` | All processed/cleaned layers joined on `SAMPLE_ID` |
 
 ## Data Source
 
 Data is downloaded from [cBioPortal](https://www.cbioportal.org/datasets) via the public REST API and study data packages. No authentication is required for public TCGA studies.
+
