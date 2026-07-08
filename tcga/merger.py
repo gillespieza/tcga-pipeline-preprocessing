@@ -101,7 +101,8 @@ def write_outputs(
     out_dir.mkdir(parents=True, exist_ok=True)
     # Write each layer
     for name, df in individual_layers.items():
-        out_path = out_dir / f"{name}.csv"
+        filename = "clinical_cleaned.csv" if name == "clinical" else f"{name}.csv"
+        out_path = out_dir / filename
         df.to_csv(out_path, index=False)
 
     # Write merged table

@@ -13,10 +13,36 @@ Public functions:
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Any, Optional
 
 import numpy as np
 import pandas as pd
+
+
+# ---------------------------------------------------------------------------
+# Clinical data helpers
+# ---------------------------------------------------------------------------
+
+def parse_survival_status(val: Any) -> Optional[float]:
+    """
+    Map various clinical survival status string representations from cBioPortal
+    to a binary 0.0 (censored/alive) or 1.0 (deceased/recurred/progressed).
+    """
+    if pd.isna(val) or val is None:
+        return None
+    val_str = str(val).strip().upper()
+    # Matches codes starting with '1:' or exactly '1'
+    if val_str.startswith("1:") or val_str == "1":
+        return 1.0
+    # Matches codes starting with '0:' or exactly '0'
+    if val_str.startswith("0:") or val_str == "0":
+        return 0.0
+    # Fallback to keyword matching
+    if any(word in val_str for word in ["DECEASED", "DEAD WITH TUMOR", "RECURRED", "PROGRESSION"]):
+        return 1.0
+    if any(word in val_str for word in ["LIVING", "ALIVE OR DEAD TUMOR FREE", "DISEASEFREE", "CENSORED"]):
+        return 0.0
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -29,7 +55,8 @@ def build_clinical_df(
 ) -> pd.DataFrame:
     """
     Pivot long-format clinical API records into a wide table with one row per
-    sample, enriched with patient-level attributes.
+    sample, enriched with patient-level attributes. Clean survival outcomes,
+    handle invalid duration data, and deduplicate to ensure 1 sample per patient.
 
     API records look like:
         {"sampleId": "TCGA-XX-01", "clinicalAttributeId": "AGE", "value": "65"}
@@ -78,6 +105,53 @@ def build_clinical_df(
                 how="left",
                 suffixes=("", "_PATIENT"),
             )
+
+    # --- 1. Deduplicate ---
+    # Deduplicate by SAMPLE_ID
+    sample_wide = sample_wide.drop_duplicates(subset=["SAMPLE_ID"])
+    
+    # Deduplicate by PATIENT_ID (keep only the first sample per patient for independent observations)
+    if "PATIENT_ID" in sample_wide.columns:
+        before_p_dedup = len(sample_wide)
+        sample_wide = sample_wide.drop_duplicates(subset=["PATIENT_ID"])
+        after_p_dedup = len(sample_wide)
+        if before_p_dedup != after_p_dedup:
+            print(f"\n  [INFO] Deduplicated patients: dropped {before_p_dedup - after_p_dedup} sample rows to ensure 1 sample per patient.")
+
+    # --- 2. Clean Survival Records and Convert to Binary Event Variables ---
+    # Define the endpoints to clean: (status_col, months_col, is_primary)
+    endpoints = [
+        ("OS_STATUS", "OS_MONTHS", True),
+        ("DSS_STATUS", "DSS_MONTHS", False),
+        ("DFS_STATUS", "DFS_MONTHS", False),
+        ("PFS_STATUS", "PFS_MONTHS", False),
+    ]
+
+    for status_col, months_col, is_primary in endpoints:
+        if status_col in sample_wide.columns and months_col in sample_wide.columns:
+            # Convert status to binary event
+            sample_wide[status_col] = sample_wide[status_col].apply(parse_survival_status)
+            # Coerce months to numeric
+            sample_wide[months_col] = pd.to_numeric(sample_wide[months_col], errors="coerce")
+            
+            # Identify missing/invalid records (months missing, months <= 0, or status missing)
+            invalid_mask = (
+                sample_wide[months_col].isna() |
+                (sample_wide[months_col] <= 0) |
+                sample_wide[status_col].isna()
+            )
+            
+            if is_primary:
+                # For primary endpoint (Overall Survival), remove the entire record from clinical data
+                before_filter = len(sample_wide)
+                sample_wide = sample_wide[~invalid_mask]
+                after_filter = len(sample_wide)
+                if before_filter != after_filter:
+                    print(f"\n  [INFO] Removed {before_filter - after_filter} record(s) with missing or invalid overall survival (OS) data.")
+            else:
+                # For secondary endpoints, set both time and status to NaN for invalid/missing entries
+                sample_wide.loc[invalid_mask, months_col] = np.nan
+                sample_wide.loc[invalid_mask, status_col] = np.nan
 
     return sample_wide
 

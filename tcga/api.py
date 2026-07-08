@@ -267,21 +267,32 @@ def get_molecular_data(
     to handle large sample lists. Requests are chunked to avoid 502 Bad Gateway
     timeouts on the public API.
     """
+    from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn
+
     all_records = []
     chunk_size = 100  # Smaller chunks to avoid timeouts
-    
-    for i in range(0, len(sample_ids), chunk_size):
-        chunk = sample_ids[i:i + chunk_size]
-        body: dict[str, Any] = {"sampleIds": chunk}
-        if entry_gene_ids:
-            body["entrezGeneIds"] = entry_gene_ids
+    total_samples = len(sample_ids)
 
-        records = _post(
-            f"/molecular-profiles/{molecular_profile_id}/molecular-data/fetch",
-            json_body=body,
-            params={"projection": "SUMMARY"},
-        )
-        all_records.extend(records)
+    with Progress(
+        TextColumn("    [blue]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeElapsedColumn(),
+    ) as progress:
+        task = progress.add_task("Fetching chunks", total=total_samples)
+        for i in range(0, total_samples, chunk_size):
+            chunk = sample_ids[i:i + chunk_size]
+            body: dict[str, Any] = {"sampleIds": chunk}
+            if entry_gene_ids:
+                body["entrezGeneIds"] = entry_gene_ids
+
+            records = _post(
+                f"/molecular-profiles/{molecular_profile_id}/molecular-data/fetch",
+                json_body=body,
+                params={"projection": "SUMMARY"},
+            )
+            all_records.extend(records)
+            progress.advance(task, len(chunk))
 
     return all_records
 
@@ -296,18 +307,29 @@ def get_mutations(
     Uses the POST /molecular-profiles/{id}/mutations/fetch endpoint.
     Returns one record per mutation call. Requests are chunked.
     """
+    from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn
+
     all_records = []
     chunk_size = 100
-    
-    for i in range(0, len(sample_ids), chunk_size):
-        chunk = sample_ids[i:i + chunk_size]
-        body = {"sampleIds": chunk}
-        records = _post(
-            f"/molecular-profiles/{molecular_profile_id}/mutations/fetch",
-            json_body=body,
-            params={"projection": "DETAILED", "pageSize": 100_000, "pageNumber": 0},
-        )
-        all_records.extend(records)
+    total_samples = len(sample_ids)
+
+    with Progress(
+        TextColumn("    [blue]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeElapsedColumn(),
+    ) as progress:
+        task = progress.add_task("Fetching chunks", total=total_samples)
+        for i in range(0, total_samples, chunk_size):
+            chunk = sample_ids[i:i + chunk_size]
+            body = {"sampleIds": chunk}
+            records = _post(
+                f"/molecular-profiles/{molecular_profile_id}/mutations/fetch",
+                json_body=body,
+                params={"projection": "DETAILED", "pageSize": 100_000, "pageNumber": 0},
+            )
+            all_records.extend(records)
+            progress.advance(task, len(chunk))
         
     return all_records
 

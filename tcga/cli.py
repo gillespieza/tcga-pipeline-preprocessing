@@ -246,21 +246,21 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     # --- Clinical ---
     if "clinical" in data_requested:
-        rprint("  Fetching clinical data...", end=" ")
+        rprint("  Fetching clinical data...")
         try:
             sample_clinical = get_clinical_data(study_id, "SAMPLE")
             patient_clinical = get_clinical_data(study_id, "PATIENT")
             clinical_df = build_clinical_df(sample_clinical, patient_clinical)
             layers["clinical"] = clinical_df
             individual_files["clinical"] = clinical_df
-            rprint(f"[green]OK[/] {len(clinical_df)} samples, {len(clinical_df.columns)} attributes")
+            rprint(f"  [green]OK[/] {len(clinical_df)} samples, {len(clinical_df.columns)} attributes")
         except Exception as exc:
-            rprint(f"[red]ERR[/] {exc}")
+            rprint(f"  [red]ERR[/] {exc}")
             sys.exit(1)
 
     # --- RNA-seq ---
     if "rnaseq" in data_requested:
-        rprint("  Fetching RNA-seq data...", end=" ")
+        rprint("  Fetching RNA-seq data...")
         profile_id = resolve_profile_id(study_id, "rnaseq")
         if profile_id:
             try:
@@ -268,70 +268,70 @@ def main(argv: Optional[List[str]] = None) -> None:
                 rnaseq_df = build_molecular_df(records)
                 if apply_log2:
                     rnaseq_df = _apply_log2_transform(rnaseq_df)
-                    rprint(f"[green]OK[/] {len(rnaseq_df)} samples x "
+                    rprint(f"  [green]OK[/] {len(rnaseq_df)} samples x "
                            f"{len(rnaseq_df.columns) - 1} genes [log2(x+1)]")
                 else:
-                    rprint(f"[green]OK[/] {len(rnaseq_df)} samples x "
+                    rprint(f"  [green]OK[/] {len(rnaseq_df)} samples x "
                            f"{len(rnaseq_df.columns) - 1} genes [raw]")
                 layers["rnaseq"] = rnaseq_df
                 individual_files["rnaseq"] = rnaseq_df
             except Exception as exc:
-                rprint(f"[yellow]WARN[/] RNA-seq fetch failed: {exc}")
+                rprint(f"  [yellow]WARN[/] RNA-seq fetch failed: {exc}")
         else:
-            rprint("[yellow]WARN[/] No RNA-seq profile found — skipping")
+            rprint("  [yellow]WARN[/] No RNA-seq profile found — skipping")
 
     # --- CNA ---
     if "cna" in data_requested:
-        rprint("  Fetching CNA data...", end=" ")
+        rprint("  Fetching CNA data...")
         profile_id = resolve_profile_id(study_id, "cna")
         if profile_id:
             try:
                 records = get_molecular_data(profile_id, sample_ids)
                 cna_df = build_molecular_df(records)
-                rprint(f"[green]OK[/] {len(cna_df)} samples x "
+                rprint(f"  [green]OK[/] {len(cna_df)} samples x "
                        f"{len(cna_df.columns) - 1} genes")
                 layers["cna"] = cna_df
                 individual_files["cna"] = cna_df
             except Exception as exc:
-                rprint(f"[yellow]WARN[/] CNA fetch failed: {exc}")
+                rprint(f"  [yellow]WARN[/] CNA fetch failed: {exc}")
         else:
-            rprint("[yellow]WARN[/] No CNA profile found — skipping")
+            rprint("  [yellow]WARN[/] No CNA profile found — skipping")
 
     # --- RPPA ---
     if "rppa" in data_requested:
-        rprint("  Fetching RPPA data...", end=" ")
+        rprint("  Fetching RPPA data...")
         profile_id = resolve_profile_id(study_id, "rppa")
         if profile_id:
             try:
                 records = get_molecular_data(profile_id, sample_ids)
                 rppa_df = build_molecular_df(records)
-                rprint(f"[green]OK[/] {len(rppa_df)} samples x "
+                rprint(f"  [green]OK[/] {len(rppa_df)} samples x "
                        f"{len(rppa_df.columns) - 1} proteins")
                 layers["rppa"] = rppa_df
                 individual_files["rppa"] = rppa_df
             except Exception as exc:
-                rprint(f"[yellow]WARN[/] RPPA fetch failed: {exc}")
+                rprint(f"  [yellow]WARN[/] RPPA fetch failed: {exc}")
         else:
-            rprint("[yellow]WARN[/] No RPPA profile found — skipping")
+            rprint("  [yellow]WARN[/] No RPPA profile found — skipping")
 
     # --- Mutations ---
     if "mutations" in data_requested:
-        rprint("  Fetching mutation data...", end=" ")
+        rprint("  Fetching mutation data...")
         profile_id = resolve_profile_id(study_id, "mutations")
         if profile_id:
             try:
                 records = get_mutations(profile_id, sample_ids)
                 long_df = build_mutations_long(records)
                 wide_df = build_mutations_wide(long_df)
-                rprint(f"[green]OK[/] {len(long_df)} variants -> "
+                rprint(f"  [green]OK[/] {len(long_df)} variants -> "
                        f"{len(wide_df)} samples x {len(wide_df.columns) - 1} genes (wide)")
                 individual_files["mutations_long"] = long_df
                 individual_files["mutations_wide"] = wide_df
                 layers["mutations_wide"] = wide_df
             except Exception as exc:
-                rprint(f"[yellow]WARN[/] Mutations fetch failed: {exc}")
+                rprint(f"  [yellow]WARN[/] Mutations fetch failed: {exc}")
         else:
-            rprint("[yellow]WARN[/] No mutation profile found — skipping")
+            rprint("  [yellow]WARN[/] No mutation profile found — skipping")
 
     # ── 6. Merge and write outputs ────────────────────────────────────
     out_dir = Path(args.output) / study_id
@@ -345,7 +345,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     else:
         out_dir.mkdir(parents=True, exist_ok=True)
         for name, df in individual_files.items():
-            df.to_csv(out_dir / f"{name}.csv", index=False)
+            filename = "clinical_cleaned.csv" if name == "clinical" else f"{name}.csv"
+            df.to_csv(out_dir / filename, index=False)
 
     rprint()
     rprint(f"[bold green]OK All outputs written to:[/] {out_dir.resolve()}")
