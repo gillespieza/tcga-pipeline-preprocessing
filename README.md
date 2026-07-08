@@ -15,6 +15,9 @@ A Python CLI tool for downloading and preprocessing multi-omics data from [cBioP
 - **RNA-seq Preprocessing**:
   - Deduplicates RNA-seq samples to ensure 1 sample per patient (keeps the first sample).
   - Automatically removes genes (columns) containing any missing (`NaN`) values.
+- **CNA Preprocessing**:
+  - Deduplicates CNA samples to ensure 1 sample per patient (keeps the first sample).
+  - Automatically removes genes (columns) containing any missing (`NaN`) values.
 - **Caching**: re-running skips the download if data is already present
 - **Outputs**: Organized into distinct `raw` and `processed` directories.
 
@@ -78,7 +81,8 @@ output/
     │   └── mutations_wide.csv    # Unaltered binary mutation matrix
     └── processed/
         ├── clinical_cleaned.csv  # Deduplicated, binarized survival endpoints, filtered OS
-        ├── rna_clean.csv         # Deduplicated RNA-seq expression matrix with missing values removed
+        ├── rnaseq_cleaned.csv    # Deduplicated RNA-seq expression matrix with missing values removed
+        ├── cna_cleaned.csv       # Deduplicated CNA matrix with missing values removed
         ├── merged.csv            # All processed/cleaned layers joined on SAMPLE_ID
         └── manifest.json         # Run metadata, sample/column counts
 ```
@@ -88,8 +92,8 @@ output/
 | Type | Raw File (`raw/`) | Processed File (`processed/`) | Description & Format |
 |---|---|---|---|
 | Clinical | `clinical.csv` | `clinical_cleaned.csv` | Raw vs. cleaned (deduplicated, binary survival events, OS-filtered) |
-| RNA-seq | `rnaseq.csv` | `rna_clean.csv` | Raw vs. preprocessed (deduplicated, genes with missing values removed) |
-| CNA | `cna.csv` | `cna.csv` | Samples × genes (-2 deep del → +2 amp) |
+| RNA-seq | `rnaseq.csv` | `rnaseq_cleaned.csv` | Raw vs. preprocessed (deduplicated, genes with missing values removed) |
+| CNA | `cna.csv` | `cna_cleaned.csv` | Raw vs. preprocessed (deduplicated, genes with missing values removed) |
 | Mutations (long) | `mutations_long.csv` | `mutations_long.csv` | One row per variant call (MAF) |
 | Mutations (wide) | `mutations_wide.csv` | `mutations_wide.csv` | Samples × genes (0/1 binary) |
 | RPPA | `rppa.csv` | `rppa.csv` | Samples × proteins (z-scores) |

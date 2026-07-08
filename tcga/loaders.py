@@ -23,6 +23,19 @@ import pandas as pd
 # Clinical data helpers
 # ---------------------------------------------------------------------------
 
+def standardise_sample_id(sample_id: Any) -> str:
+    """
+    Standardise TCGA sample barcodes to a uniform 15-character hyphenated format
+    (e.g., converts 'TCGA.KL.8323.01A' or 'TCGA-KL-8323-01A-11D' to 'TCGA-KL-8323-01')
+    """
+    if pd.isna(sample_id) or sample_id is None:
+        return ""
+    s = str(sample_id).strip().replace(".", "-").upper()
+    if s.startswith("TCGA-") and len(s) > 15:
+        return s[:15]
+    return s
+
+
 def parse_survival_status(val: Any) -> Optional[float]:
     """
     Map various clinical survival status string representations from cBioPortal
@@ -115,15 +128,20 @@ def clean_clinical_df(raw_df: pd.DataFrame) -> pd.DataFrame:
     produced by build_clinical_df().
 
     Steps:
-      1. Deduplicate by SAMPLE_ID, then by PATIENT_ID (keep first sample per
+      1. Standardise SAMPLE_ID.
+      2. Deduplicate by SAMPLE_ID, then by PATIENT_ID (keep first sample per
          patient to ensure statistical independence in downstream models).
-      2. Parse OS/DSS/DFS/PFS status strings into binary 0.0/1.0 event variables.
-      3. Drop rows where Overall Survival (OS) is missing or has months <= 0.
-      4. Set secondary endpoint (DSS/DFS/PFS) invalid/missing entries to NaN.
+      3. Parse OS/DSS/DFS/PFS status strings into binary 0.0/1.0 event variables.
+      4. Drop rows where Overall Survival (OS) is missing or has months <= 0.
+      5. Set secondary endpoint (DSS/DFS/PFS) invalid/missing entries to NaN.
 
     Returns a new DataFrame; the input is not modified.
     """
     df = raw_df.copy()
+
+    # Standardise sample IDs
+    df["SAMPLE_ID"] = df["SAMPLE_ID"].apply(standardise_sample_id)
+    df = df[df["SAMPLE_ID"] != ""]
 
     # --- 1. Deduplicate ---
     df = df.drop_duplicates(subset=["SAMPLE_ID"])
@@ -218,6 +236,10 @@ def clean_rnaseq_df(rnaseq_df: pd.DataFrame) -> pd.DataFrame:
 
     df = rnaseq_df.copy()
 
+    # Standardise sample IDs
+    df["SAMPLE_ID"] = df["SAMPLE_ID"].apply(standardise_sample_id)
+    df = df[df["SAMPLE_ID"] != ""]
+
     # --- 1. Deduplicate by Patient ID ---
     # Extract PATIENT_ID from SAMPLE_ID (first 12 chars for TCGA barcode)
     df["PATIENT_ID"] = df["SAMPLE_ID"].apply(
@@ -239,6 +261,45 @@ def clean_rnaseq_df(rnaseq_df: pd.DataFrame) -> pd.DataFrame:
     if cols_with_nans:
         df = df.drop(columns=cols_with_nans)
         print(f"\n  [INFO] RNA-seq: Removed {len(cols_with_nans)} gene(s) with missing values.")
+
+    return df
+
+
+def clean_cna_df(cna_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Deduplicate CNA sample records (ensuring one sample per patient)
+    and remove columns (genes) with missing values.
+    """
+    if cna_df.empty or "SAMPLE_ID" not in cna_df.columns:
+        return cna_df
+
+    df = cna_df.copy()
+
+    # Standardise sample IDs
+    df["SAMPLE_ID"] = df["SAMPLE_ID"].apply(standardise_sample_id)
+    df = df[df["SAMPLE_ID"] != ""]
+
+    # --- 1. Deduplicate by Patient ID ---
+    # Extract PATIENT_ID from SAMPLE_ID (first 12 chars for TCGA barcode)
+    df["PATIENT_ID"] = df["SAMPLE_ID"].apply(
+        lambda x: "-".join(x.split("-")[:3]) if isinstance(x, str) and x.startswith("TCGA-") else x
+    )
+
+    before_p_dedup = len(df)
+    df = df.drop_duplicates(subset=["PATIENT_ID"])
+    after_p_dedup = len(df)
+    if before_p_dedup != after_p_dedup:
+        print(f"\n  [INFO] CNA deduplicated patients: dropped {before_p_dedup - after_p_dedup} sample rows to ensure 1 sample per patient.")
+
+    df = df.drop(columns=["PATIENT_ID"])
+
+    # --- 2. Remove Missing Values (Genes/Columns with NaN) ---
+    gene_cols = [c for c in df.columns if c != "SAMPLE_ID"]
+    missing_counts = df[gene_cols].isna().sum()
+    cols_with_nans = missing_counts[missing_counts > 0].index.tolist()
+    if cols_with_nans:
+        df = df.drop(columns=cols_with_nans)
+        print(f"\n  [INFO] CNA: Removed {len(cols_with_nans)} gene(s) with missing values.")
 
     return df
 
@@ -298,3 +359,46 @@ def build_mutations_wide(long_df: pd.DataFrame) -> pd.DataFrame:
     )
     binary.columns.name = None
     return binary
+
+
+def clean_mutations_df(long_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean somatic mutation records (long format):
+      1. Standardise SAMPLE_ID.
+      2. Filter out missing/empty IDs.
+      3. Filter for non-silent/functional mutations.
+      4. Deduplicate patients to ensure 1 sample per patient.
+    """
+    if long_df.empty:
+        return long_df
+
+    df = long_df.copy()
+
+    # 1. Standardise sample IDs
+    df["SAMPLE_ID"] = df["SAMPLE_ID"].apply(standardise_sample_id)
+
+    # 2. Filter out missing/empty IDs or HUGO_SYMBOL
+    df = df[df["SAMPLE_ID"].str.strip() != ""]
+    df = df[df["HUGO_SYMBOL"].str.strip() != ""]
+
+    # 3. Filter for non-silent/functional mutations
+    non_silent = {
+        "FRAME_SHIFT_DEL", "FRAME_SHIFT_INS", "IN_FRAME_DEL", "IN_FRAME_INS",
+        "MISSENSE_MUTATION", "NONSENSE_MUTATION", "SPLICE_SITE",
+        "TRANSLATION_START_SITE", "NONSTOP_MUTATION"
+    }
+    df = df[df["VARIANT_CLASSIFICATION"].astype(str).str.upper().isin(non_silent)]
+
+    # 4. Deduplicate patients (keep 1 sample per patient)
+    df["PATIENT_ID"] = df["SAMPLE_ID"].apply(
+        lambda x: "-".join(x.split("-")[:3]) if isinstance(x, str) and x.startswith("TCGA-") else x
+    )
+
+    # Identify which sample to keep per patient (take the first unique sample_id per patient)
+    patient_sample_map = df[["PATIENT_ID", "SAMPLE_ID"]].drop_duplicates().groupby("PATIENT_ID").first().reset_index()
+    df = df[df["SAMPLE_ID"].isin(patient_sample_map["SAMPLE_ID"])]
+
+    # Drop temporary column
+    df = df.drop(columns=["PATIENT_ID"])
+
+    return df

@@ -36,8 +36,11 @@ from .loaders import (
     clean_clinical_df,
     build_molecular_df,
     clean_rnaseq_df,
+    clean_cna_df,
     build_mutations_long,
     build_mutations_wide,
+    clean_mutations_df,
+    standardise_sample_id,
 )
 from .merger import merge_layers, write_outputs
 
@@ -300,11 +303,13 @@ def main(argv: Optional[List[str]] = None) -> None:
             try:
                 records = get_molecular_data(profile_id, sample_ids)
                 cna_df = build_molecular_df(records)
-                rprint(f"  [green]OK[/] {len(cna_df)} samples x "
-                       f"{len(cna_df.columns) - 1} genes")
-                layers["cna"]        = cna_df
+                clean_cna = clean_cna_df(cna_df)
+                rprint(f"  [green]OK[/] {len(cna_df)} raw samples -> "
+                       f"{len(clean_cna)} after cleaning, "
+                       f"{len(clean_cna.columns) - 1} genes")
+                layers["cna"]        = clean_cna
                 raw_files["cna"]     = cna_df
-                cleaned_files["cna"] = cna_df
+                cleaned_files["cna"] = clean_cna
             except Exception as exc:
                 rprint(f"  [yellow]WARN[/] CNA fetch failed: {exc}")
         else:
@@ -318,11 +323,26 @@ def main(argv: Optional[List[str]] = None) -> None:
             try:
                 records = get_molecular_data(profile_id, sample_ids)
                 rppa_df = build_molecular_df(records)
-                rprint(f"  [green]OK[/] {len(rppa_df)} samples x "
-                       f"{len(rppa_df.columns) - 1} proteins")
-                layers["rppa"]        = rppa_df
+                # Standardise and deduplicate cleaned RPPA data
+                clean_rppa = rppa_df.copy()
+                clean_rppa["SAMPLE_ID"] = clean_rppa["SAMPLE_ID"].apply(standardise_sample_id)
+                clean_rppa = clean_rppa[clean_rppa["SAMPLE_ID"] != ""]
+                clean_rppa["PATIENT_ID"] = clean_rppa["SAMPLE_ID"].apply(
+                    lambda x: "-".join(x.split("-")[:3]) if isinstance(x, str) and x.startswith("TCGA-") else x
+                )
+                before_p_dedup = len(clean_rppa)
+                clean_rppa = clean_rppa.drop_duplicates(subset=["PATIENT_ID"])
+                after_p_dedup = len(clean_rppa)
+                if before_p_dedup != after_p_dedup:
+                    print(f"\n  [INFO] RPPA deduplicated patients: dropped {before_p_dedup - after_p_dedup} sample rows to ensure 1 sample per patient.")
+                clean_rppa = clean_rppa.drop(columns=["PATIENT_ID"])
+
+                rprint(f"  [green]OK[/] {len(rppa_df)} raw samples -> "
+                       f"{len(clean_rppa)} after cleaning, "
+                       f"{len(clean_rppa.columns) - 1} proteins")
+                layers["rppa"]        = clean_rppa
                 raw_files["rppa"]     = rppa_df
-                cleaned_files["rppa"] = rppa_df
+                cleaned_files["rppa"] = clean_rppa
             except Exception as exc:
                 rprint(f"  [yellow]WARN[/] RPPA fetch failed: {exc}")
         else:
@@ -336,12 +356,14 @@ def main(argv: Optional[List[str]] = None) -> None:
             try:
                 records = get_mutations(profile_id, sample_ids)
                 long_df = build_mutations_long(records)
-                wide_df = build_mutations_wide(long_df)
-                rprint(f"  [green]OK[/] {len(long_df)} variants -> "
+                cleaned_long = clean_mutations_df(long_df)
+                wide_df = build_mutations_wide(cleaned_long)
+                rprint(f"  [green]OK[/] {len(long_df)} raw variants -> "
+                       f"{len(cleaned_long)} after cleaning, "
                        f"{len(wide_df)} samples x {len(wide_df.columns) - 1} genes (wide)")
                 raw_files["mutations_long"]     = long_df
-                raw_files["mutations_wide"]     = wide_df
-                cleaned_files["mutations_long"] = long_df
+                raw_files["mutations_wide"]     = build_mutations_wide(long_df)
+                cleaned_files["mutations_long"] = cleaned_long
                 cleaned_files["mutations_wide"] = wide_df
                 layers["mutations_wide"]         = wide_df
             except Exception as exc:
@@ -369,13 +391,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         for name, df in raw_files.items():
             df.to_csv(raw_dir / f"{name}.csv", index=False)
         for name, df in cleaned_files.items():
-            if name == "clinical":
-                filename = "clinical_cleaned.csv"
-            elif name == "rnaseq":
-                filename = "rna_clean.csv"
-            else:
-                filename = f"{name}.csv"
-            df.to_csv(processed_dir / filename, index=False)
+            df.to_csv(processed_dir / f"{name}_cleaned.csv", index=False)
 
     rprint()
     rprint(f"[bold green]OK All outputs written to:[/] {out_dir.resolve()}")
@@ -387,7 +403,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             rprint(f"  [dim]{subdir.name}/[/]")
             for f in sorted(subdir.iterdir()):
                 if f.is_file():
-                    size_kb = f.stat().st_size / 1024
-                    rprint(f"    {f.name:<25s}  {size_kb:>8.1f} KB")
+                    size_mb = f.stat().st_size / (1024 * 1024)
+                    rprint(f"    {f.name:<25s}  {size_mb:>8.3f} MB")
 
     rprint("\n[bold]Done![/]")
