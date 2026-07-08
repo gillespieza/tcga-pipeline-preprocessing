@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Dict
 import pathlib
+import shutil
 import pandas as pd
 
 # ---------------------------------------------------------------------------
@@ -115,6 +116,13 @@ def write_outputs(
 
     raw_dir       = out_dir / "raw"
     processed_dir = out_dir / "processed"
+
+    # Clear previous outputs so stale files from prior runs do not persist
+    if raw_dir.exists():
+        shutil.rmtree(raw_dir)
+    if processed_dir.exists():
+        shutil.rmtree(processed_dir)
+
     raw_dir.mkdir(parents=True, exist_ok=True)
     processed_dir.mkdir(parents=True, exist_ok=True)
 
