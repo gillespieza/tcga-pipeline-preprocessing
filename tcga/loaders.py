@@ -361,25 +361,41 @@ def build_mutations_wide(long_df: pd.DataFrame) -> pd.DataFrame:
     return binary
 
 
-def clean_mutations_df(long_df: pd.DataFrame) -> pd.DataFrame:
+def clean_mutations_df(
+    long_df: pd.DataFrame,
+    print_fn: Optional[Any] = None,
+) -> pd.DataFrame:
     """
     Clean somatic mutation records (long format):
       1. Standardise SAMPLE_ID.
       2. Filter out missing/empty IDs.
       3. Filter for non-silent/functional mutations.
       4. Deduplicate patients to ensure 1 sample per patient.
+
+    Args:
+        long_df:  Raw long-format mutation DataFrame.
+        print_fn: Optional callable for progress output (e.g. rich's rprint).
+                  When provided, a status line is emitted after each step.
     """
+    _log = print_fn if callable(print_fn) else lambda *a, **kw: None
+
     if long_df.empty:
         return long_df
 
     df = long_df.copy()
+    n_start = len(df)
 
     # 1. Standardise sample IDs
+    _log(f"    [dim]Standardising sample IDs ({n_start:,} variants)...[/]")
     df["SAMPLE_ID"] = df["SAMPLE_ID"].apply(standardise_sample_id)
 
     # 2. Filter out missing/empty IDs or HUGO_SYMBOL
+    before_filter = len(df)
     df = df[df["SAMPLE_ID"].str.strip() != ""]
-    df = df[df["HUGO_SYMBOL"].str.strip() != ""]
+    df = df[df["HUGO_SYMBOL"].notna() & (df["HUGO_SYMBOL"].str.strip() != "")]
+    dropped_missing = before_filter - len(df)
+    if dropped_missing:
+        _log(f"    [dim]Dropped {dropped_missing:,} record(s) with missing ID or gene symbol.[/]")
 
     # 3. Filter for non-silent/functional mutations
     non_silent = {
@@ -387,16 +403,42 @@ def clean_mutations_df(long_df: pd.DataFrame) -> pd.DataFrame:
         "MISSENSE_MUTATION", "NONSENSE_MUTATION", "SPLICE_SITE",
         "TRANSLATION_START_SITE", "NONSTOP_MUTATION"
     }
+    before_ns = len(df)
     df = df[df["VARIANT_CLASSIFICATION"].astype(str).str.upper().isin(non_silent)]
+    dropped_silent = before_ns - len(df)
+    _log(
+        f"    [dim]Filtered silent/non-functional variants: "
+        f"{before_ns:,} → {len(df):,} "
+        f"(removed {dropped_silent:,} silent/intronic/UTR).[/]"
+    )
 
     # 4. Deduplicate patients (keep 1 sample per patient)
     df["PATIENT_ID"] = df["SAMPLE_ID"].apply(
         lambda x: "-".join(x.split("-")[:3]) if isinstance(x, str) and x.startswith("TCGA-") else x
     )
+    n_patients_before = df["PATIENT_ID"].nunique()
+    n_samples_before  = df["SAMPLE_ID"].nunique()
 
-    # Identify which sample to keep per patient (take the first unique sample_id per patient)
-    patient_sample_map = df[["PATIENT_ID", "SAMPLE_ID"]].drop_duplicates().groupby("PATIENT_ID").first().reset_index()
+    # Keep first unique sample_id per patient
+    patient_sample_map = (
+        df[["PATIENT_ID", "SAMPLE_ID"]]
+        .drop_duplicates()
+        .groupby("PATIENT_ID")
+        .first()
+        .reset_index()
+    )
     df = df[df["SAMPLE_ID"].isin(patient_sample_map["SAMPLE_ID"])]
+
+    n_samples_after = df["SAMPLE_ID"].nunique()
+    dropped_dup_samples = n_samples_before - n_samples_after
+    if dropped_dup_samples:
+        _log(
+            f"    [dim]Patient deduplication: {n_samples_before} samples → "
+            f"{n_samples_after} ({dropped_dup_samples} duplicate sample(s) removed, "
+            f"{n_patients_before} unique patients retained).[/]"
+        )
+    else:
+        _log(f"    [dim]Patient deduplication: {n_samples_after} samples, no duplicates found.[/]")
 
     # Drop temporary column
     df = df.drop(columns=["PATIENT_ID"])

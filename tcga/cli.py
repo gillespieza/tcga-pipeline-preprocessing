@@ -356,7 +356,9 @@ def main(argv: Optional[List[str]] = None) -> None:
             try:
                 records = get_mutations(profile_id, sample_ids)
                 long_df = build_mutations_long(records)
-                cleaned_long = clean_mutations_df(long_df)
+                rprint(f"  Cleaning {len(long_df):,} variants...")
+                cleaned_long = clean_mutations_df(long_df, print_fn=rprint)
+                rprint("  Building mutation matrix...")
                 wide_df = build_mutations_wide(cleaned_long)
                 rprint(f"  [green]OK[/] {len(long_df)} raw variants -> "
                        f"{len(cleaned_long)} after cleaning, "
