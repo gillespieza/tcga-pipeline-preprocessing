@@ -33,6 +33,7 @@ from .api import (
 )
 from .loaders import (
     build_clinical_df,
+    clean_clinical_df,
     build_molecular_df,
     build_mutations_long,
     build_mutations_wide,
@@ -217,7 +218,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     if meta is None:
         rprint(f"[bold red]Error:[/] Study '{study_id}' not found on cBioPortal.")
         sys.exit(1)
-    rprint(f"[bold cyan]Study:[/] {study_id}  —  {meta.get('name', '')}")
+    rprint(f"[bold cyan]Study:[/] {study_id}  -  {meta.get('name', '')}")
 
     # ── 2. Data type selection ────────────────────────────────────────
     if args.data:
@@ -241,8 +242,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     rprint(f"[green]OK[/] {len(sample_ids)} samples")
 
     # ── 5. Fetch each requested layer via REST API ────────────────────
+    # layers: used for merging (always uses cleaned clinical)
+    # raw_files: written verbatim to raw/
+    # cleaned_files: written to processed/ (clinical_cleaned.csv + other layers)
     layers: dict[str, pd.DataFrame] = {}
-    individual_files: dict[str, pd.DataFrame] = {}
+    raw_files: dict[str, pd.DataFrame] = {}
+    cleaned_files: dict[str, pd.DataFrame] = {}
 
     # --- Clinical ---
     if "clinical" in data_requested:
@@ -250,10 +255,14 @@ def main(argv: Optional[List[str]] = None) -> None:
         try:
             sample_clinical = get_clinical_data(study_id, "SAMPLE")
             patient_clinical = get_clinical_data(study_id, "PATIENT")
-            clinical_df = build_clinical_df(sample_clinical, patient_clinical)
-            layers["clinical"] = clinical_df
-            individual_files["clinical"] = clinical_df
-            rprint(f"  [green]OK[/] {len(clinical_df)} samples, {len(clinical_df.columns)} attributes")
+            raw_clinical_df     = build_clinical_df(sample_clinical, patient_clinical)
+            cleaned_clinical_df = clean_clinical_df(raw_clinical_df)
+            raw_files["clinical"]     = raw_clinical_df
+            cleaned_files["clinical"] = cleaned_clinical_df
+            layers["clinical"]        = cleaned_clinical_df
+            rprint(f"  [green]OK[/] {len(raw_clinical_df)} raw samples -> "
+                   f"{len(cleaned_clinical_df)} after cleaning, "
+                   f"{len(cleaned_clinical_df.columns)} attributes")
         except Exception as exc:
             rprint(f"  [red]ERR[/] {exc}")
             sys.exit(1)
@@ -273,8 +282,9 @@ def main(argv: Optional[List[str]] = None) -> None:
                 else:
                     rprint(f"  [green]OK[/] {len(rnaseq_df)} samples x "
                            f"{len(rnaseq_df.columns) - 1} genes [raw]")
-                layers["rnaseq"] = rnaseq_df
-                individual_files["rnaseq"] = rnaseq_df
+                layers["rnaseq"]        = rnaseq_df
+                raw_files["rnaseq"]     = rnaseq_df
+                cleaned_files["rnaseq"] = rnaseq_df
             except Exception as exc:
                 rprint(f"  [yellow]WARN[/] RNA-seq fetch failed: {exc}")
         else:
@@ -290,8 +300,9 @@ def main(argv: Optional[List[str]] = None) -> None:
                 cna_df = build_molecular_df(records)
                 rprint(f"  [green]OK[/] {len(cna_df)} samples x "
                        f"{len(cna_df.columns) - 1} genes")
-                layers["cna"] = cna_df
-                individual_files["cna"] = cna_df
+                layers["cna"]        = cna_df
+                raw_files["cna"]     = cna_df
+                cleaned_files["cna"] = cna_df
             except Exception as exc:
                 rprint(f"  [yellow]WARN[/] CNA fetch failed: {exc}")
         else:
@@ -307,8 +318,9 @@ def main(argv: Optional[List[str]] = None) -> None:
                 rppa_df = build_molecular_df(records)
                 rprint(f"  [green]OK[/] {len(rppa_df)} samples x "
                        f"{len(rppa_df.columns) - 1} proteins")
-                layers["rppa"] = rppa_df
-                individual_files["rppa"] = rppa_df
+                layers["rppa"]        = rppa_df
+                raw_files["rppa"]     = rppa_df
+                cleaned_files["rppa"] = rppa_df
             except Exception as exc:
                 rprint(f"  [yellow]WARN[/] RPPA fetch failed: {exc}")
         else:
@@ -325,9 +337,11 @@ def main(argv: Optional[List[str]] = None) -> None:
                 wide_df = build_mutations_wide(long_df)
                 rprint(f"  [green]OK[/] {len(long_df)} variants -> "
                        f"{len(wide_df)} samples x {len(wide_df.columns) - 1} genes (wide)")
-                individual_files["mutations_long"] = long_df
-                individual_files["mutations_wide"] = wide_df
-                layers["mutations_wide"] = wide_df
+                raw_files["mutations_long"]     = long_df
+                raw_files["mutations_wide"]     = wide_df
+                cleaned_files["mutations_long"] = long_df
+                cleaned_files["mutations_wide"] = wide_df
+                layers["mutations_wide"]         = wide_df
             except Exception as exc:
                 rprint(f"  [yellow]WARN[/] Mutations fetch failed: {exc}")
         else:
@@ -340,23 +354,33 @@ def main(argv: Optional[List[str]] = None) -> None:
     if not args.no_merge and "clinical" in layers:
         merge_eligible = {k: v for k, v in layers.items()}
         merged_df = merge_layers(merge_eligible)
-        write_outputs(merged_df, individual_files, out_dir, study_id, sorted(data_requested))
+        write_outputs(
+            merged_df, raw_files, cleaned_files,
+            out_dir, study_id, sorted(data_requested)
+        )
         rprint(f"  [green]OK[/] Merged: {len(merged_df)} samples x {len(merged_df.columns)} columns")
     else:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        for name, df in individual_files.items():
+        raw_dir       = out_dir / "raw"
+        processed_dir = out_dir / "processed"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        for name, df in raw_files.items():
+            df.to_csv(raw_dir / f"{name}.csv", index=False)
+        for name, df in cleaned_files.items():
             filename = "clinical_cleaned.csv" if name == "clinical" else f"{name}.csv"
-            df.to_csv(out_dir / filename, index=False)
+            df.to_csv(processed_dir / filename, index=False)
 
     rprint()
     rprint(f"[bold green]OK All outputs written to:[/] {out_dir.resolve()}")
     rprint()
 
-    # Print a summary of written files
-    if out_dir.exists():
-        for f in sorted(out_dir.iterdir()):
-            if f.is_file():
-                size_kb = f.stat().st_size / 1024
-                rprint(f"    {f.name:<25s}  {size_kb:>8.1f} KB")
+    # Print a summary of written files (recurse into raw/ and processed/)
+    for subdir in [out_dir / "raw", out_dir / "processed"]:
+        if subdir.exists():
+            rprint(f"  [dim]{subdir.name}/[/]")
+            for f in sorted(subdir.iterdir()):
+                if f.is_file():
+                    size_kb = f.stat().st_size / 1024
+                    rprint(f"    {f.name:<25s}  {size_kb:>8.1f} KB")
 
     rprint("\n[bold]Done![/]")

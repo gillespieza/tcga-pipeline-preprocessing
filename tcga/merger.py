@@ -76,48 +76,70 @@ def merge_layers(layers: Dict[str, pd.DataFrame]) -> pd.DataFrame:
 
 def write_outputs(
     merged_df: pd.DataFrame,
-    individual_layers: Dict[str, pd.DataFrame],
+    raw_layers: Dict[str, pd.DataFrame],
+    cleaned_layers: Dict[str, pd.DataFrame],
     out_dir: "pathlib.Path",
     study_id: str,
     data_types: list[str],
 ) -> None:
-    """Persist the merged table, each individual layer, and a small manifest.
+    """Persist outputs to two subdirectories:
+
+    ``raw/``
+        One CSV per fetched data type, exactly as returned by the API
+        (clinical.csv, rnaseq.csv, cna.csv, rppa.csv, mutations_long.csv,
+        mutations_wide.csv).
+
+    ``processed/``
+        clinical_cleaned.csv  — deduplicated, binary survival events, invalid
+                                OS records removed.
+        merged.csv            — all cleaned layers joined on SAMPLE_ID.
+        manifest.json         — study ID, fetch timestamp, row/column counts.
 
     Parameters
     ----------
     merged_df
-        The result of :func:`merge_layers`.
-    individual_layers
-        Mapping from data‑type name to its original *wide* DataFrame (clinical
-        already combined).  These are written to ``{type}.csv``.
+        The result of :func:`merge_layers` (built from cleaned_layers).
+    raw_layers
+        Mapping of data-type name -> raw DataFrame (as fetched from API).
+    cleaned_layers
+        Mapping of data-type name -> cleaned DataFrame.  The ``clinical``
+        key holds the cleaned clinical table written as clinical_cleaned.csv.
     out_dir
-        Output directory – will be created if it does not exist.
+        Study-level output directory – subdirs are created automatically.
     study_id
-        Identifier of the cBioPortal study – used in the manifest.
+        cBioPortal study identifier – used in the manifest.
     data_types
-        List of data‑type identifiers that were fetched (e.g. ``["clinical",
-        "rnaseq", "cna", "mutations_wide"]``).
+        List of data-type identifiers that were fetched.
     """
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # Write each layer
-    for name, df in individual_layers.items():
+    import json
+
+    raw_dir       = out_dir / "raw"
+    processed_dir = out_dir / "processed"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    processed_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- raw/ : one file per fetched layer, unaltered ---
+    for name, df in raw_layers.items():
+        df.to_csv(raw_dir / f"{name}.csv", index=False)
+
+    # --- processed/ : cleaned clinical + merged table ---
+    for name, df in cleaned_layers.items():
         filename = "clinical_cleaned.csv" if name == "clinical" else f"{name}.csv"
-        out_path = out_dir / filename
-        df.to_csv(out_path, index=False)
+        df.to_csv(processed_dir / filename, index=False)
 
-    # Write merged table
-    merged_path = out_dir / "merged.csv"
-    merged_df.to_csv(merged_path, index=False)
+    merged_df.to_csv(processed_dir / "merged.csv", index=False)
 
-    # Manifest JSON – simple record of what was produced
+    # Manifest lives in processed/ alongside the analysis-ready files
     manifest = {
-        "study_id": study_id,
+        "study_id":   study_id,
         "fetched_at": pd.Timestamp.utcnow().isoformat() + "Z",
         "data_types": data_types,
-        "samples": len(merged_df),
-        "columns": len(merged_df.columns),
+        "raw_samples":       len(list(raw_layers.values())[0]) if raw_layers else 0,
+        "processed_samples": len(merged_df),
+        "processed_columns": len(merged_df.columns),
     }
-    import json
-    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (processed_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
 
 # End of module
