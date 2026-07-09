@@ -21,6 +21,26 @@ from rich import print as rprint
 from rich.panel import Panel
 from rich.table import Table
 
+# Custom high-contrast style explicitly forcing black/white to override prompt_toolkit defaults
+custom_style = questionary.Style([
+    ("qmark", "bold"),
+    ("question", "bold"),
+    ("answer", "bold"),
+    ("pointer", "bold"),
+    ("highlighted", "fg:black bg:white bold"),
+    ("selected", "bold"),
+    ("separator", ""),
+    ("instruction", ""),
+    ("text", ""),
+    ("disabled", "italic"),
+    # Override prompt_toolkit's default autocomplete menu colours
+    ("completion-menu", "fg:black bg:white"),
+    ("completion-menu.completion", "fg:black bg:white"),
+    ("completion-menu.completion.current", "fg:white bg:black bold"),
+    ("scrollbar.background", "bg:white"),
+    ("scrollbar.button", "bg:black"),
+])
+
 from .api import (
     detect_available_data_types,
     get_clinical_data,
@@ -130,6 +150,7 @@ def _interactive_study_selection() -> str:
         validate=lambda x: bool(x),
         ignore_case=True,
         match_middle=True,
+        style=custom_style,
     ).ask()
 
     if not chosen:
@@ -168,6 +189,7 @@ def _interactive_data_selection(study_id: str) -> List[str]:
     selected = questionary.checkbox(
         "Select data types to fetch:",
         choices=choices,
+        style=custom_style,
     ).ask()
 
     if not selected:
@@ -181,6 +203,7 @@ def _interactive_log2_prompt() -> bool:
     return questionary.confirm(
         "Apply log2(x+1) transform to RNA-seq values?",
         default=False,
+        style=custom_style,
     ).ask()
 
 
