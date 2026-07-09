@@ -408,7 +408,7 @@ def clean_mutations_df(
     dropped_silent = before_ns - len(df)
     _log(
         f"    [dim]Filtered silent/non-functional variants: "
-        f"{before_ns:,} → {len(df):,} "
+        f"{before_ns:,} -> {len(df):,} "
         f"(removed {dropped_silent:,} silent/intronic/UTR).[/]"
     )
 
@@ -433,7 +433,7 @@ def clean_mutations_df(
     dropped_dup_samples = n_samples_before - n_samples_after
     if dropped_dup_samples:
         _log(
-            f"    [dim]Patient deduplication: {n_samples_before} samples → "
+            f"    [dim]Patient deduplication: {n_samples_before} samples -> "
             f"{n_samples_after} ({dropped_dup_samples} duplicate sample(s) removed, "
             f"{n_patients_before} unique patients retained).[/]"
         )
